@@ -1,81 +1,88 @@
+/**
+ * NEXERA AFRICA - Main Logic
+ * Integrates: Pi SDK, Multi-language, Navigation, and Role-Based Dashboards
+ */
+
+// --- 1. PI SDK INITIALIZATION ---
+const Pi = window.Pi;
+if (typeof Pi !== 'undefined') {
+    Pi.init({ version: "2.0", sandbox: true });
+}
+
+// --- 2. CORE AUTH FUNCTIONS ---
+async function authWithPi() {
+    try {
+        const scopes = ['username', 'payments'];
+        // Triggers the native Pi Browser authentication popup
+        const auth = await Pi.authenticate(scopes, onIncompletePaymentFound);
+        console.log(`Authenticated: ${auth.user.username}`);
+        return auth.user; 
+    } catch (err) {
+        console.error("Pi Auth failed:", err);
+        alert("Authentication failed. Please ensure you are using the Pi Browser.");
+    }
+}
+
+function onIncompletePaymentFound(payment) {
+    console.log("Incomplete payment detected:", payment);
+}
+
+// --- 3. DOM CONTENT LOADED ---
 document.addEventListener('DOMContentLoaded', () => {
     
-    // --- 1. INITIALIZATION ---
     initLanguage();
     checkAuth();
 
-    // --- 2. LANGUAGE SWITCHER LOGIC ---
+    // --- A. LANGUAGE LOGIC ---
     function initLanguage() {
-        // Check local storage for saved language, default to English
         const savedLang = localStorage.getItem('nexera_lang') || 'en';
         const selector = document.getElementById('language-selector');
-        if(selector) selector.value = savedLang;
-        
-        applyLanguage(savedLang);
-
-        // Listen for dropdown changes
-        if(selector) {
+        if (selector) {
+            selector.value = savedLang;
             selector.addEventListener('change', (e) => {
                 const lang = e.target.value;
                 localStorage.setItem('nexera_lang', lang);
                 applyLanguage(lang);
             });
         }
+        applyLanguage(savedLang);
     }
 
     function applyLanguage(lang) {
         const elements = document.querySelectorAll('[data-i18n]');
         elements.forEach(el => {
             const key = el.getAttribute('data-i18n');
-            if (translations[lang] && translations[lang][key]) {
+            if (window.translations && translations[lang] && translations[lang][key]) {
                 el.innerText = translations[lang][key];
             }
         });
-        
-        // Update html lang attribute
         document.documentElement.lang = lang;
     }
 
-    // --- 3. NAVIGATION LOGIC ---
-    // Exposed to global scope for HTML onclick events
-    window.navigate = function(pageId) {
-        // Hide all sections
-        document.querySelectorAll('.page-section').forEach(sec => {
-            sec.classList.remove('active');
-        });
-        // Show target section
-        document.getElementById(pageId).classList.add('active');
-        // Scroll to top
-        window.scrollTo(0, 0);
-    };
-
-    // --- 4. AUTHENTICATION LOGIC ---
-    const piLoginBtn = document.getElementById('pi-login-btn');
+    // --- B. AUTHENTICATION & LOGIN LOGIC ---
     
-    // Initialize Pi SDK
-    if(typeof Pi !== 'undefined') {
-        Pi.init({ version: "2.0", sandbox: true });
-    }
-
+    // Pi Network Login Button
+    const piLoginBtn = document.getElementById('pi-login-btn');
     if (piLoginBtn) {
         piLoginBtn.addEventListener('click', async () => {
-            try {
-                // Mock Pi Auth (Since we have no backend)
-                // In real production: const authResult = await Pi.authenticate(...)
-                alert("Simulating Pi Login...");
-                const user = { username: "PiUser_" + Math.floor(Math.random()*1000) };
-                
-                localStorage.setItem('nexera_user', JSON.stringify(user));
-                updateAuthUI(user.username);
-                closeModal('loginModal');
-                alert("Logged in via Pi!");
-            } catch (err) {
-                console.error(err);
+            const piUser = await authWithPi();
+            if (piUser) {
+                const users = JSON.parse(localStorage.getItem('nexera_users')) || [];
+                const existingUser = users.find(u => u.username === piUser.username);
+
+                if (existingUser) {
+                    saveAndRedirect(existingUser);
+                } else {
+                    alert("Pi account recognized. Please Register to select your role (Admin, Vendor, or User).");
+                    closeModal('loginModal');
+                    openModal('registerModal');
+                    document.getElementById('reg-username').value = piUser.username;
+                }
             }
         });
     }
 
-    // Manual Login
+    // Manual Login Form
     const loginForm = document.getElementById('loginForm');
     if (loginForm) {
         loginForm.addEventListener('submit', (e) => {
@@ -87,22 +94,21 @@ document.addEventListener('DOMContentLoaded', () => {
             const found = users.find(user => user.username === u && user.password === p);
 
             if (found) {
-                localStorage.setItem('nexera_user', JSON.stringify({ username: found.username }));
-                updateAuthUI(found.username);
-                closeModal('loginModal');
+                saveAndRedirect(found);
             } else {
                 alert("Invalid credentials");
             }
         });
     }
 
-    // Manual Register
+    // Manual Register Form (With Role Selection)
     const regForm = document.getElementById('registerForm');
     if (regForm) {
         regForm.addEventListener('submit', (e) => {
             e.preventDefault();
             const u = document.getElementById('reg-username').value;
             const p = document.getElementById('reg-password').value;
+            const r = document.getElementById('reg-role').value; // 'admin', 'vendor', or 'user'
             
             const users = JSON.parse(localStorage.getItem('nexera_users')) || [];
             if (users.some(user => user.username === u)) {
@@ -110,17 +116,59 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
-            users.push({ username: u, password: p });
+            const newUser = { username: u, password: p, role: r };
+            users.push(newUser);
             localStorage.setItem('nexera_users', JSON.stringify(users));
-            alert("Registered! Please login.");
+            
+            alert(`Registered as ${r}! Please login.`);
             closeModal('registerModal');
             openModal('loginModal');
         });
     }
 
+    // Common function to save login state and show dashboard
+    function saveAndRedirect(user) {
+        localStorage.setItem('nexera_user', JSON.stringify(user));
+        updateAuthUI(user.username);
+        closeModal('loginModal');
+        handleDashboardRedirection(user);
+    }
+
+    // --- C. DASHBOARD REDIRECTION LOGIC ---
+    window.handleDashboardRedirection = function(user) {
+        // Update all name displays
+        document.querySelectorAll('.display-name').forEach(el => el.innerText = user.username);
+
+        // Logic based on role
+        if (user.role === 'admin') {
+            renderAdminStats();
+            navigate('admin-dashboard');
+        } else if (user.role === 'vendor') {
+            if (typeof renderVendorItems === 'function') renderVendorItems(user.username);
+            document.getElementById('btn-open-sell').style.display = 'block';
+            navigate('vendor-dashboard');
+        } else {
+            document.getElementById('btn-open-sell').style.display = 'none';
+            navigate('user-dashboard');
+        }
+    };
+
+    function renderAdminStats() {
+        const users = JSON.parse(localStorage.getItem('nexera_users')) || [];
+        const adminTotalUsers = document.getElementById('admin-total-users');
+        const adminTotalVendors = document.getElementById('admin-total-vendors');
+        
+        if (adminTotalUsers) adminTotalUsers.innerText = users.length;
+        if (adminTotalVendors) adminTotalVendors.innerText = users.filter(u => u.role === 'vendor').length;
+    }
+
     function checkAuth() {
         const user = JSON.parse(localStorage.getItem('nexera_user'));
-        if (user) updateAuthUI(user.username);
+        if (user) {
+            updateAuthUI(user.username);
+            // If user is already logged in on refresh, stay on dashboard
+            handleDashboardRedirection(user);
+        }
     }
 
     function updateAuthUI(username) {
@@ -129,19 +177,33 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('username-display').innerText = username;
     }
 
+    // --- D. NAVIGATION & MODALS ---
+    window.navigate = function(pageId) {
+        document.querySelectorAll('.page-section').forEach(sec => sec.classList.remove('active'));
+        const target = document.getElementById(pageId);
+        if (target) target.classList.add('active');
+        window.scrollTo(0, 0);
+
+        if (pageId === 'marketplace' && typeof renderMarketplace === 'function') {
+            renderMarketplace();
+        }
+    };
+
     window.logout = function() {
         localStorage.removeItem('nexera_user');
         location.reload();
     };
 
-    // --- 5. MODAL UTILS ---
     window.openModal = function(id) {
-        document.getElementById(id).style.display = 'flex';
+        const modal = document.getElementById(id);
+        if (modal) modal.style.display = 'flex';
     };
+
     window.closeModal = function(id) {
-        document.getElementById(id).style.display = 'none';
+        const modal = document.getElementById(id);
+        if (modal) modal.style.display = 'none';
     };
-    // Close modal on outside click
+
     window.onclick = function(e) {
         if (e.target.classList.contains('modal')) e.target.style.display = 'none';
     };

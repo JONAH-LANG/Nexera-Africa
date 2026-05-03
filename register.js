@@ -1,47 +1,63 @@
 document.addEventListener('DOMContentLoaded', () => {
     const registerForm = document.getElementById('registerForm');
 
-    registerForm.addEventListener('submit', (e) => {
+    registerForm.addEventListener('submit', async (e) => {
         e.preventDefault();
 
         const username = document.getElementById('reg-username').value.trim();
-        const password = document.getElementById('reg-password').value;
+        const userRole = document.getElementById('reg-role').value;
 
-        if (username.length < 3 || password.length < 4) {
-            alert("Username must be 3+ chars and Password 4+ chars.");
+        if (username.length < 3) {
+            alert("Username must be at least 3 characters.");
             return;
         }
 
-        // Get existing users
-        const storedUsers = JSON.parse(localStorage.getItem('nexera_users')) || [];
+        try {
+            const scopes = ['username', 'payments'];
 
-        // Check if user exists
-        if (storedUsers.some(user => user.username === username)) {
-            alert("Username already exists!");
-            return;
+            // 👉 Use real Pi auth in production
+            let piUid = "pi_simulated_" + username;
+
+            /*
+            const auth = await Pi.authenticate(scopes, onIncompletePaymentFound);
+            piUid = auth.user.uid;
+            */
+
+            const res = await fetch("/api/register", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    username,
+                    role: userRole,
+                    piUid
+                })
+            });
+
+            const data = await res.json();
+
+            if (!data.success) {
+                alert(data.error);
+                return;
+            }
+
+            alert(`Registered as ${userRole}`);
+
+            closeModal('registerModal');
+            registerForm.reset();
+
+            setTimeout(() => {
+                openModal('loginModal');
+            }, 500);
+
+        } catch (error) {
+            console.error(error);
+            alert("Registration failed");
         }
-
-        // Create new user object
-        const newUser = {
-            id: Date.now(),
-            username: username,
-            password: password // In a real app, never store plain text passwords!
-        };
-
-        // Save to LocalStorage
-        storedUsers.push(newUser);
-        localStorage.setItem('nexera_users', JSON.stringify(storedUsers));
-
-        alert("Registration successful! Please login.");
-        closeModal('registerModal');
-        
-        // Clear form
-        registerForm.reset();
-        
-        // Open login modal automatically
-        setTimeout(() => {
-            document.getElementById('login-username').value = username;
-            openModal('loginModal');
-        }, 500);
     });
 });
+
+function onIncompletePaymentFound(payment) {
+    console.log(payment);
+}
